@@ -5,9 +5,9 @@ from datetime import date
 from email.mime.text import MIMEText
 import yfinance as yf
 
-# ── 실제 보유 수량 (매수/매도 발생 시 여기만 갱신) ──
-
-ACTIVE_HOLDINGS = {
+# ── 최초 보유 수량 (2026-07-16 기준). data/holdings.json이 없을 때만 이 값으로 시작함.
+#    이후로는 여기를 손으로 고칠 필요 없음 — pending_buys.json에 이번 주 매수 금액만 적으면 됨.
+SEED_ACTIVE_HOLDINGS = {
     "VOO": 0.195296,
     "VXUS": 0.697638,
     "BND": 0.807332,
@@ -25,6 +25,7 @@ TARGET_WEIGHTS = {
     "SCHD": 0.05,
 }
 
+# 신규 매수 없음, 자연 감소 대기 — 여기는 계속 수동 관리 (거의 안 바뀜)
 LEGACY_HOLDINGS = {
     "VTI": 0.162431,
     "VT": 0.381653,
@@ -35,37 +36,48 @@ LEGACY_HOLDINGS = {
     "AAPL": 0.186133,
 }
 
+# 별도 실험 계좌 (스윙 매매라 자동 누적 대상 아님, 수동 관리)
 EXPERIMENT_HOLDINGS = {
     "003490.KS": 16,  # 대한항공
 }
 
-ALERT_THRESHOLD = 0.05  # ±5%p 벗어나면 이메일
+ALERT_THRESHOLD = 0.05
 
+HOLDINGS_PATH = "data/holdings.json"
+PENDING_BUYS_PATH = "pending_buys.json"
 HISTORY_PATH = "data/history.json"
-HISTORY_KEEP = 30       # 최근 30일치만 보관
-TREND_WINDOW = 5        # 추세 판단에 쓸 기록 개수 (약 5거래일)
-TREND_THRESHOLD = 2.0   # %p 이상 움직이면 추세로 판단
+HISTORY_KEEP = 30
+TREND_WINDOW = 5
+TREND_THRESHOLD = 2.0
 
 
 def get_usd_krw_rate():
-    return yf.Ticker("KRW=X").history(period="1d")["Close"].iloc[-1]
+    hist = yf.Ticker("KRW=X").history(period="5d")
+    if hist.empty:
+        raise RuntimeError("환율 데이터를 가져오지 못함 (야후 파이낸스 응답 없음)")
+    return hist["Close"].iloc[-1]
 
 
 def get_last_price(ticker):
-    return yf.Ticker(ticker).history(period="1d")["Close"].iloc[-1]
+    hist = yf.Ticker(ticker).history(period="5d")
+    if hist.empty:
+        raise RuntimeError(f"{ticker} 가격 데이터를 가져오지 못함 (야후 파이낸스 응답 없음)")
+    return hist["Close"].iloc[-1]
 
 
-def load_history():
-    if not os.path.exists(HISTORY_PATH):
-        return []
-    with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+def load_json(path, default):
+    if not os.path.exists(path):
+        return default
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_history(history):
-    os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
-    with open(HISTORY_PATH, "w", encoding="utf-8") as f:
-        json.dump(history[-HISTORY_KEEP:], f, ensure_ascii=False, indent=2)
+def save_json(path, data):
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def trend_label(pct):
@@ -87,10 +99,32 @@ def fmt_change(changes, trends, tk):
     return " | " + " | ".join(parts) if parts else ""
 
 
+def apply_pending_buys(holdings, prices, fx):
+    pending = load_json(PENDING_BUYS_PATH, {tk: 0 for tk in TARGET_WEIGHTS})
+    applied_lines = []
+    changed = False
+    for tk in TARGET_WEIGHTS:
+        amount = pending.get(tk, 0) or 0
+        if amount > 0:
+            shares_added = amount / (prices[tk] * fx)
+            holdings[tk] = holdings.get(tk, 0) + shares_added
+            applied_lines.append(f"{tk}: +{amount:,.0f}원 매수 반영 (약 {shares_added:.4f}주)")
+            changed = True
+        pending[tk] = 0
+    save_json(PENDING_BUYS_PATH, pending)
+    if changed:
+        save_json(HOLDINGS_PATH, holdings)
+    return applied_lines
+
+
 def build_report():
     fx = get_usd_krw_rate()
+    prices = {tk: get_last_price(tk) for tk in TARGET_WEIGHTS}
 
-    active_values = {tk: shares * get_last_price(tk) * fx for tk, shares in ACTIVE_HOLDINGS.items()}
+    holdings = load_json(HOLDINGS_PATH, dict(SEED_ACTIVE_HOLDINGS))
+    applied_lines = apply_pending_buys(holdings, prices, fx)
+
+    active_values = {tk: holdings[tk] * prices[tk] * fx for tk in TARGET_WEIGHTS}
     legacy_values = {tk: shares * get_last_price(tk) * fx for tk, shares in LEGACY_HOLDINGS.items()}
     experiment_values = {tk: shares * get_last_price(tk) for tk, shares in EXPERIMENT_HOLDINGS.items()}
 
@@ -99,10 +133,9 @@ def build_report():
     all_values.update(legacy_values)
     all_values.update(experiment_values)
 
-    history = load_history()
+    history = load_json(HISTORY_PATH, [])
     today_str = date.today().isoformat()
 
-    # 전일(직전 기록) 대비 변화
     changes = {}
     if history:
         prev = history[-1]["values"]
@@ -111,7 +144,6 @@ def build_report():
                 diff = val - prev[tk]
                 changes[tk] = (diff, diff / prev[tk] * 100)
 
-    # 최근 N개 기록 대비 누적 변화 (추세)
     trends = {}
     if history:
         base_entry = history[max(0, len(history) - TREND_WINDOW)]
@@ -122,7 +154,14 @@ def build_report():
 
     active_total = sum(active_values.values())
 
-    lines = [f"환율(USD/KRW): {fx:,.1f}", "", "=== 리밸런싱 대상 (목표 비중 있음) ==="]
+    lines = [f"환율(USD/KRW): {fx:,.1f}", ""]
+
+    if applied_lines:
+        lines.append("=== 이번 회차 신규 매수 반영 ===")
+        lines.extend(applied_lines)
+        lines.append("")
+
+    lines.append("=== 리밸런싱 대상 (목표 비중 있음) ===")
     alerts = []
     for tk, val in active_values.items():
         weight = val / active_total
@@ -157,7 +196,7 @@ def build_report():
         history[-1]["values"] = all_values
     else:
         history.append({"date": today_str, "values": all_values})
-    save_history(history)
+    save_json(HISTORY_PATH, history[-HISTORY_KEEP:])
 
     return "\n".join(lines), alerts
 
