@@ -5,6 +5,9 @@ on:
     - cron: '0 22 * * *'  # UTC 22:00 = 미국 장마감 이후, KST 다음날 07:00
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -19,3 +22,10 @@ jobs:
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      - name: 기록 파일 커밋
+        run: |
+          git config user.name "portfolio-tracker-bot"
+          git config user.email "actions@github.com"
+          git add data/history.json data/holdings.json pending_buys.json
+          git diff --cached --quiet && echo "변경 없음" || git commit -m "history/holdings update $(date -u +%F)"
+          git push
