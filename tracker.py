@@ -36,14 +36,15 @@ LEGACY_HOLDINGS = {
     "AAPL": 0.186133,
 }
 
-# 별도 실험 계좌 (스윙 매매라 자동 누적 대상 아님, 수동 관리)
-EXPERIMENT_HOLDINGS = {
+# 별도 실험 계좌 (스윙 매매, data/experiment_holdings.json이 있으면 그 값을 우선 사용)
+SEED_EXPERIMENT_HOLDINGS = {
     "003490.KS": 16,  # 대한항공
 }
 
 ALERT_THRESHOLD = 0.05
 
 HOLDINGS_PATH = "data/holdings.json"
+EXPERIMENT_HOLDINGS_PATH = "experiment_holdings.json"
 PENDING_BUYS_PATH = "pending_buys.json"
 HISTORY_PATH = "data/history.json"
 HISTORY_KEEP = 30
@@ -126,7 +127,9 @@ def build_report():
 
     active_values = {tk: holdings[tk] * prices[tk] * fx for tk in TARGET_WEIGHTS}
     legacy_values = {tk: shares * get_last_price(tk) * fx for tk, shares in LEGACY_HOLDINGS.items()}
-    experiment_values = {tk: shares * get_last_price(tk) for tk, shares in EXPERIMENT_HOLDINGS.items()}
+    experiment_holdings = load_json(EXPERIMENT_HOLDINGS_PATH, dict(SEED_EXPERIMENT_HOLDINGS))
+    save_json(EXPERIMENT_HOLDINGS_PATH, experiment_holdings)
+    experiment_values = {tk: shares * get_last_price(tk) for tk, shares in experiment_holdings.items()}
 
     all_values = {}
     all_values.update(active_values)
