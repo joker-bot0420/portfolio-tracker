@@ -47,7 +47,7 @@ HOLDINGS_PATH = "data/holdings.json"
 EXPERIMENT_HOLDINGS_PATH = "experiment_holdings.json"
 PENDING_BUYS_PATH = "pending_buys.json"
 HISTORY_PATH = "data/history.json"
-HISTORY_KEEP = 30
+HISTORY_KEEP = 3650
 TREND_WINDOW = 5
 TREND_THRESHOLD = 2.0
 
