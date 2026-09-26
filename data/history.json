@@ -1195,5 +1195,24 @@
       "AAPL": NaN,
       "003490.KS": 0.0
     }
+  },
+  {
+    "date": "2026-09-26",
+    "values": {
+      "VOO": NaN,
+      "VXUS": NaN,
+      "BND": NaN,
+      "QQQM": NaN,
+      "SMH": NaN,
+      "SCHD": NaN,
+      "VTI": NaN,
+      "VT": NaN,
+      "NVDA": NaN,
+      "MSFT": NaN,
+      "AMZN": NaN,
+      "GOOGL": NaN,
+      "AAPL": NaN,
+      "003490.KS": 0.0
+    }
   }
 ]
